@@ -7,6 +7,9 @@ import Container from './Container'
 import Dice from './Dice'
 import ThemeLoader from './ThemeLoader'
 
+let seed = {a: 1, b: 2, c: 3, d: 4}
+let simSpeed = 16
+
 class WorldOnscreen {
 	config
 	initialized = false
@@ -133,7 +136,9 @@ class WorldOnscreen {
 		this.#engine.runRenderLoop(this.renderLoop.bind(this))
 		this.#physicsWorkerPort.postMessage({
 			action: "resumeSimulation",
-			newStartPoint
+			newStartPoint,
+			seed,
+			simSpeed
 		})
 	}
 
@@ -214,9 +219,10 @@ class WorldOnscreen {
 		// loadDie allows you to specify sides(dieType) and theme and returns the options you passed in
 		Dice.loadDie(options, this.#scene).then(resp => {
 			// space out adding the dice so they don't lump together too much
-			this.#dieRollTimer.push(setTimeout(() => {
-				this.#add(resp)
-			}, this.#count++ * this.config.delay))
+			// this.#dieRollTimer.push(setTimeout(() => {
+			// 	this.#add(resp)
+			// }, this.#count++ * this.config.delay))
+			this.#add(resp)
 		})
 	}
 
@@ -242,6 +248,10 @@ class WorldOnscreen {
 
 	// add a die to the scene
 	async #add(options) {
+		
+		seed = options.seed
+		simSpeed = options.simSpeed
+
 		if(this.#engine.activeRenderLoops.length === 0) {
 			this.render(options.newStartPoint)
 		}
@@ -268,7 +278,8 @@ class WorldOnscreen {
 				newStartPoint: options.newStartPoint,
 				theme: options.theme,
 				meshName: options.meshName,
-			}
+				queueLength: options.queueLength
+			},
 		})
 	
 		// for d100's we need to add an additional d10 and pair it up with the d100 just created
@@ -289,7 +300,8 @@ class WorldOnscreen {
 					scale: this.config.scale,
 					id: newDie.d10Instance.id,
 					theme: options.theme,
-					meshName: options.meshName
+					meshName: options.meshName,
+					queueLength: options.queueLength 
 				}
 			})
 		}

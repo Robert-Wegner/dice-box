@@ -2,6 +2,8 @@ import { createCanvas } from './components/world/canvas'
 import physicsWorker from './components/physics.worker.js?worker&inline'
 import { debounce, createAsyncQueue, Random, hexToRGB, webgl_support } from './helpers'
 
+const defaultSeed = {a: 10000, b: 20000, c: 30000, d: 40000}
+const defaultSimSpeed = 16
 const defaultOptions = {
 	id: `dice-canvas-${Date.now()}`, // set the canvas id
 	container: null,
@@ -460,7 +462,7 @@ class WorldFacade {
 	}
 
 	// TODO: pass data with roll - such as roll name. Passed back at the end in the results
-	roll(notation, {theme = this.config.theme, themeColor = this.config.themeColor, newStartPoint = true} = {}) {
+	roll(notation, {theme = this.config.theme, themeColor = this.config.themeColor, newStartPoint = true} = {}, seed = defaultSeed, simSpeed = defaultSimSpeed) {
 		// note: to add to a roll on screen use .add method
 		// reset the offscreen worker and physics worker with each new roll
 		this.clear()
@@ -475,13 +477,13 @@ class WorldFacade {
 		})
 
 		const parsedNotation = this.createNotationArray(notation, this.themesLoadedData[theme].diceAvailable)
-		this.#makeRoll(parsedNotation, collectionId)
+		this.#makeRoll(parsedNotation, collectionId, seed, simSpeed)
 
 		// returns a Promise that is resolved in onRollComplete
 		return this.rollCollectionData[collectionId].promise
 	}
 
-  add(notation, {theme = this.config.theme, themeColor = this.config.themeColor, newStartPoint = true} = {}) {
+  	add(notation, {theme = this.config.theme, themeColor = this.config.themeColor, newStartPoint = true} = {}, seed = defaultSeed, simSpeed = defaultSimSpeed) {
 
 		const collectionId = this.#collectionIndex++
 
@@ -494,7 +496,7 @@ class WorldFacade {
 		})
 		
 		const parsedNotation = this.createNotationArray(notation, this.themesLoadedData[theme].diceAvailable)
-		this.#makeRoll(parsedNotation, collectionId)
+		this.#makeRoll(parsedNotation, collectionId, seed, simSpeed)
 
 		// returns a Promise that is resolved in onRollComplete
 		return this.rollCollectionData[collectionId].promise
@@ -548,13 +550,62 @@ class WorldFacade {
 	}
 
 	// used by both .add and .roll - .roll clears the box and .add does not
-	async #makeRoll(parsedNotation, collectionId){
 
+	async #makeRoll(parsedNotation, collectionId, seed, simSpeed){
 		this.onBeforeRoll(parsedNotation)
 
 		const collection = this.rollCollectionData[collectionId]
 		let newStartPoint = collection.newStartPoint
 
+		// loop through the number of dice in the group and compute queuelength
+		let queueLength = 0
+		parsedNotation.forEach(async notation => {
+			if(!notation.sides) {
+				throw new Error("Improper dice notation or unable to parse notation")
+			}
+			let theme = notation.theme || collection.theme || this.config.theme
+			const hasGroupId = notation.groupId !== undefined
+			let index
+			
+			// const {meshName, diceAvailable, diceInherited = {}, material: { type: materialType }} = this.themesLoadedData[theme]
+			let diceAvailable = this.themesLoadedData[theme]?.diceAvailable
+			let diceExtended = this.themesLoadedData[theme].diceExtended || {}
+
+			const diceExtra = Object.keys(diceExtended)
+
+			if(diceExtra && diceExtra.includes(notation.sides)){
+				theme = diceExtended[notation.sides]
+				diceAvailable = this.themesLoadedData[theme]?.diceAvailable
+			}
+
+
+			// TODO: should I validate that added dice are only joining groups of the same "sides" value - e.g.: d6's can only be added to groups when sides: 6? Probably.
+
+			for (var i = 0, len = notation.qty; i < len; i++) {
+				// id's start at zero and zero can be falsy, so we check for undefined
+				let rollId = notation.rollId !== undefined ? notation.rollId : this.#rollIndex++
+				let id = notation.id !== undefined ? notation.id : this.#idIndex++
+				index = hasGroupId ? notation.groupId : this.#groupIndex
+
+				// when a roll object is passed in, notation.sides could be an integer - convert the die type to include the "d" prefix so it will match the model names
+				const dieType = Number.isInteger(notation.sides) ? `d${notation.sides}` : notation.sides
+
+				// when a roll string is passed in, notation.sides will be a string - convert it to an integer so it will match the object data type of a notation object
+				if(/^d[1-9]{1}[0-9]{0,1}0?$/.test(notation.sides)){
+					notation.sides = parseInt(notation.sides.replace('d', ''))
+				}
+
+				// TODO: eliminate the 'd' for more flexible naming such as 'fate' - ensure numbers are strings
+				if (notation.sides === 'fate' && (!diceAvailable.includes(dieType) && !diceExtra.includes(dieType)) || notation.sides === 'fate' && !this.#webgl_support){
+					//pass
+				} else if(this.config.suspendSimulation || (!diceAvailable.includes(dieType) && !diceExtra.includes(dieType)) || !this.#webgl_support){
+					//pass
+				} else {
+					queueLength += 1
+				}
+			}
+		})
+		// now queueLength is set. Yes this is ugly.
 		// loop through the number of dice in the group and roll each one
 		parsedNotation.forEach(async notation => {
 			if(!notation.sides) {
@@ -596,19 +647,20 @@ class WorldFacade {
 			}
 
 			// TODO: should I validate that added dice are only joining groups of the same "sides" value - e.g.: d6's can only be added to groups when sides: 6? Probably.
+
 			for (var i = 0, len = notation.qty; i < len; i++) {
 				// id's start at zero and zero can be falsy, so we check for undefined
 				let rollId = notation.rollId !== undefined ? notation.rollId : this.#rollIndex++
 				let id = notation.id !== undefined ? notation.id : this.#idIndex++
 				index = hasGroupId ? notation.groupId : this.#groupIndex
 
-        // when a roll object is passed in, notation.sides could be an integer - convert the die type to include the "d" prefix so it will match the model names
+				// when a roll object is passed in, notation.sides could be an integer - convert the die type to include the "d" prefix so it will match the model names
 				const dieType = Number.isInteger(notation.sides) ? `d${notation.sides}` : notation.sides
 
-        // when a roll string is passed in, notation.sides will be a string - convert it to an integer so it will match the object data type of a notation object
-        if(/^d[1-9]{1}[0-9]{0,1}0?$/.test(notation.sides)){
-          notation.sides =  parseInt(notation.sides.replace('d', ''))
-        }
+				// when a roll string is passed in, notation.sides will be a string - convert it to an integer so it will match the object data type of a notation object
+				if(/^d[1-9]{1}[0-9]{0,1}0?$/.test(notation.sides)){
+					notation.sides =  parseInt(notation.sides.replace('d', ''))
+				}
 
 				const roll = {
 					sides: notation.sides,
@@ -657,7 +709,10 @@ class WorldFacade {
 						newStartPoint,
 						theme: extendedTheme?.systemName || theme,
 						meshName: extendedTheme?.meshName || meshName,
-						colorSuffix
+						colorSuffix,
+						queueLength: queueLength,
+						seed: seed,
+						simSpeed: simSpeed
 					})
 				}
 

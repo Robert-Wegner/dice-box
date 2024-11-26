@@ -1,7 +1,25 @@
 import { lerp } from '../helpers'
-import AmmoJS from "../ammo/ammo.wasm.es.js"
+//import AmmoJS from "../ammo/ammo.wasm.es.js"
+import { AmmoModule } from "../ammo/ammo_custom.js";
 
 // Firefox limitation: https://github.com/vitejs/vite/issues/4586
+
+function sfc32(seed) {
+	let { a, b, c, d } = seed
+    return function() {
+        a |= 0; b |= 0; c |= 0; d |= 0;
+        let t = (a + b) | 0;
+        a = b ^ (b >>> 9);
+        b = (c + (c << 3)) | 0;
+        c = (c << 21 | c >>> 11);
+        d = (d + 1) | 0;
+        t = (t + d) | 0;
+        c = (c + t) | 0;
+        return (t >>> 0) / 4294967296;
+    };
+}
+
+let seededRandom = sfc32({a: 2, b: 3, c: 4, d: 5})
 
 // there's probably a better place for these variables
 let bodies = []
@@ -11,11 +29,13 @@ let physicsWorld
 let Ammo
 let worldWorkerPort
 let tmpBtTrans
-let sharedVector3
+const createVector3 = (x, y, z) => new Ammo.btVector3(x, y, z);
 let width = 150
 let height = 150
 let aspect = 1
 let stopLoop = false
+let isInitialized = false;
+let simSpeed = 16
 
 const defaultOptions = {
 	size: 9.5,
@@ -36,6 +56,9 @@ let config = {...defaultOptions}
 
 let emptyVector
 let diceBufferView
+
+let queueLength = 1; // Set this to your desired queue size
+let diceQueue = [];
 
 self.onmessage = (e) => {
   switch (e.data.action) {
@@ -65,26 +88,25 @@ self.onmessage = (e) => {
 			updateConfig(e.data.options)
 			break
     case "connect":
-      worldWorkerPort = e.ports[0]
-      worldWorkerPort.onmessage = (e) => {
+		worldWorkerPort = e.ports[0]
+		worldWorkerPort.onmessage = (e) => {
         switch (e.data.action) {
-					case "initBuffer":
-						diceBufferView = new Float32Array(e.data.diceBuffer)
-						diceBufferView[0] = -1
-						break;
-					case "loadModels":
-						// console.log('e.data', e.data)
-						loadModels(e.data.options)
-						break;
-          case "addDie":
-						// toss from all edges
-						// setStartPosition()
-						if(e.data.options.newStartPoint){
-							setStartPosition()
-						}
-            const newDie = addDie(e.data.options)
-						rollDie(newDie)
+			case "initBuffer":
+				diceBufferView = new Float32Array(e.data.diceBuffer)
+				diceBufferView[0] = -1
+				break;
+			case "loadModels":
+				// console.log('e.data', e.data)
+				loadModels(e.data.options)
+				break;
+          	case "addDie":
+				queueLength = e.data.options.queueLength
+				queueDie(e.data.options)
+				if(e.data.options.newStartPoint){
+					setStartPosition()
+				}
             break;
+
           case "rollDie":
 						// TODO: this won't work, need a die object
             rollDie(e.data.id)
@@ -97,11 +119,12 @@ self.onmessage = (e) => {
 						
             break;
           case "resumeSimulation":
-						if(e.data.newStartPoint){
-							setStartPosition()
-						}
-            stopLoop = false
-						loop()
+				//console.log("resumeSimulation")
+				seededRandom = sfc32(e.data.seed)
+				simSpeed = e.data.simSpeed
+				if(e.data.newStartPoint){
+					setStartPosition()
+				}
             break;
 					case "stepSimulation":
 						diceBufferView = new Float32Array(e.data.diceBuffer)
@@ -159,21 +182,22 @@ const init = async (data) => {
 	config.throwForce = computeThrowForce(config.throwForce,config.mass,config.scale)
 	config.startingHeight = computeStartingHeight(config.startingHeight)
 
-	const ammoWASM = {
-		// locateFile: () => '../../node_modules/ammo.js/builds/ammo.wasm.wasm'
-		locateFile: () => `${config.origin + config.assetPath}ammo/ammo.wasm.wasm`
-	}
+	//console.log(config);
+	const ammoConfig = {
+		locateFile: (file) => `${config.origin + config.assetPath}ammo/${file}`
+	};
+	
+	// Initialize Ammo.js
+	Ammo = await AmmoModule(ammoConfig);
 
-	Ammo = await new AmmoJS(ammoWASM)
-
+	//console.log(Ammo);
+	
 	tmpBtTrans = new Ammo.btTransform()
-	sharedVector3 = new Ammo.btVector3(0, 0, 0)
-	emptyVector = setVector3(0,0,0)
+	emptyVector = createVector3(0,0,0)
 
 	setStartPosition()
 	
 	physicsWorld = setupPhysicsWorld()
-
 	addBoxToWorld(config.size, config.startingHeight + 10)
 }
 
@@ -198,15 +222,16 @@ const updateConfig = (options) => {
 
 	removeBoxFromWorld()
 	addBoxToWorld(config.size, config.startingHeight + 10)
-	physicsWorld.setGravity(setVector3(0, -9.81 * config.gravity, 0))
+	physicsWorld.setGravity(createVector3(0, -9.81 * config.gravity, 0))
 	Object.values(colliders).map((collider) => {
-		collider.convexHull.setLocalScaling(setVector3(collider.scaling[0] * config.scale, collider.scaling[1] * config.scale, collider.scaling[2] * config.scale))
+		collider.convexHull.setLocalScaling(createVector3(collider.scaling[0] * config.scale, collider.scaling[1] * config.scale, collider.scaling[2] * config.scale))
 	})
 }
 
 // options object with colliders and meshName are required
 const loadModels = async ({colliders: modelData, meshName}) => {
-
+	// Sort modelData by name or id to ensure consistent ordering
+	modelData.sort((a, b) => a.name.localeCompare(b.name));
 	let has_d100 = false
 	let has_d10 = false
 
@@ -226,10 +251,10 @@ const loadModels = async ({colliders: modelData, meshName}) => {
 	}
 }
 
-const setVector3 = (x,y,z) => {
-	sharedVector3.setValue(x,y,z)
-	return sharedVector3
-}
+// const setVector3 = (x,y,z) => {
+// 	sharedVector3.setValue(x,y,z)
+// 	return sharedVector3
+// }
 
 const setStartPosition = () => {
 	let size = config.size
@@ -239,12 +264,12 @@ const setStartPosition = () => {
 	let xMax = size * aspect / -2 + edgeOffset
 	let yMin = size / 2 - edgeOffset
 	let yMax = size / -2 + edgeOffset
-	// let xEnvelope = lerp(envelopeSize * aspect - edgeOffset * aspect, -envelopeSize * aspect + edgeOffset * aspect, Math.random())
-	let xEnvelope = lerp(xMin, xMax, Math.random())
-	let yEnvelope = lerp(yMin, yMax, Math.random())
-	let tossFromTop = Math.round(Math.random())
-	let tossFromLeft = Math.round(Math.random())
-	let tossX = Math.round(Math.random())
+	// let xEnvelope = lerp(envelopeSize * aspect - edgeOffset * aspect, -envelopeSize * aspect + edgeOffset * aspect, seededRandom())
+	let xEnvelope = lerp(xMin, xMax, seededRandom())
+	let yEnvelope = lerp(yMin, yMax, seededRandom())
+	let tossFromTop = Math.round(seededRandom())
+	let tossFromLeft = Math.round(seededRandom())
+	let tossX = Math.round(seededRandom())
 	// console.log(`throw coming from`, tossX ? tossFromTop ? "top" : "bottom" : tossFromLeft ? "left" : "right")
 
 	// forces = {
@@ -261,8 +286,6 @@ const setStartPosition = () => {
 		config.startingHeight,
 		tossX ? tossFromTop ? yMax : yMin : yEnvelope
 	]
-
-	// console.log(`startPosition`, config.startPosition)
 }
 
 const createConvexHull = (mesh) => {
@@ -271,11 +294,11 @@ const createConvexHull = (mesh) => {
 	let count = mesh.positions.length
 
 	for (let i = 0; i < count; i+=3) {
-		let v = setVector3(mesh.positions[i], mesh.positions[i+1], mesh.positions[i+2])
+		let v = createVector3(mesh.positions[i], mesh.positions[i+1], mesh.positions[i+2])
 		convexMesh.addPoint(v, true)
 	}
 	
-	convexMesh.setLocalScaling(setVector3(mesh.scaling[0] * config.scale, mesh.scaling[1] * config.scale, mesh.scaling[2] * config.scale))
+	convexMesh.setLocalScaling(createVector3(mesh.scaling[0] * config.scale, mesh.scaling[1] * config.scale, mesh.scaling[2] * config.scale))
 
 	return convexMesh
 }
@@ -290,9 +313,9 @@ const createRigidBody = (collisionShape, params) => {
 		pos = [0,0,0],
 		// quat = [0,0,0,-1],
 		quat = [
-			lerp(-1.5, 1.5, Math.random()),
-			lerp(-1.5, 1.5, Math.random()),
-			lerp(-1.5, 1.5, Math.random()),
+			lerp(-1.5, 1.5, seededRandom()),
+			lerp(-1.5, 1.5, seededRandom()),
+			lerp(-1.5, 1.5, seededRandom()),
 			-1
 		],
 		scale = [1,1,1],
@@ -300,14 +323,14 @@ const createRigidBody = (collisionShape, params) => {
 		restitution = config.restitution
 	} = params
 
-	// apply position and rotation
-	const transform = new Ammo.btTransform()
-	// console.log(`collisionShape scaling `, collisionShape.getLocalScaling().x(),collisionShape.getLocalScaling().y(),collisionShape.getLocalScaling().z())
-	transform.setIdentity()
-	transform.setOrigin(setVector3(pos[0], pos[1], pos[2]))
-	transform.setRotation(
-		new Ammo.btQuaternion(quat[0], quat[1], quat[2], quat[3])
-	)
+	const quatObj = new Ammo.btQuaternion(quat[0], quat[1], quat[2], quat[3])
+    quatObj.normalize() // Ensure the quaternion is of unit length
+    // Apply position and rotation
+    const transform = new Ammo.btTransform()
+    transform.setIdentity()
+    transform.setOrigin(createVector3(pos[0], pos[1], pos[2]))
+    transform.setRotation(quatObj)
+
 	// collisionShape.setLocalScaling(new Ammo.btVector3(1.1, -1.1, 1.1))
 	// transform.ScalingToRef()
 	// set the scale of the collider
@@ -315,7 +338,7 @@ const createRigidBody = (collisionShape, params) => {
 
 	// create the rigid body
 	const motionState = new Ammo.btDefaultMotionState(transform)
-	const localInertia = setVector3(0, 0, 0)
+	const localInertia = createVector3(0, 0, 0)
 	if (mass > 0) collisionShape.calculateLocalInertia(mass, localInertia)
 	const rbInfo = new Ammo.btRigidBodyConstructionInfo(
 		mass,
@@ -343,12 +366,12 @@ let boxParts = []
 const addBoxToWorld = (size, height) => {
 	const tempParts = []
 	// ground
-	const localInertia = setVector3(0, 0, 0);
+	const localInertia = createVector3(0, 0, 0);
 
 	const groundTransform = new Ammo.btTransform()
 	groundTransform.setIdentity()
-	groundTransform.setOrigin(setVector3(0, -.5, 0))
-	const groundShape = new Ammo.btBoxShape(setVector3(size * aspect, 1, size))
+	groundTransform.setOrigin(createVector3(0, -.5, 0))
+	const groundShape = new Ammo.btBoxShape(createVector3(size * aspect, 1, size))
 	const groundMotionState = new Ammo.btDefaultMotionState(groundTransform)
 	const groundInfo = new Ammo.btRigidBodyConstructionInfo(0, groundMotionState, groundShape, localInertia)
 	const groundBody = new Ammo.btRigidBody(groundInfo)
@@ -360,8 +383,8 @@ const addBoxToWorld = (size, height) => {
 
 	const ceilingTransform = new Ammo.btTransform()
 	ceilingTransform.setIdentity()
-	ceilingTransform.setOrigin(setVector3(0, height - .5, 0))
-	const ceilingShape = new Ammo.btBoxShape(setVector3(size * aspect, 1, size))
+	ceilingTransform.setOrigin(createVector3(0, height - .5, 0))
+	const ceilingShape = new Ammo.btBoxShape(createVector3(size * aspect, 1, size))
 	const ceilingMotionState = new Ammo.btDefaultMotionState(ceilingTransform)
 	const ceilingInfo = new Ammo.btRigidBodyConstructionInfo(0, ceilingMotionState, ceilingShape, localInertia)
 	const ceilingBody = new Ammo.btRigidBody(ceilingInfo)
@@ -373,8 +396,8 @@ const addBoxToWorld = (size, height) => {
 
 	const wallTopTransform = new Ammo.btTransform()
 	wallTopTransform.setIdentity()
-	wallTopTransform.setOrigin(setVector3(0, 0, (size/-2) - .5))
-	const wallTopShape = new Ammo.btBoxShape(setVector3(size * aspect, height, 1))
+	wallTopTransform.setOrigin(createVector3(0, 0, (size/-2) - .5))
+	const wallTopShape = new Ammo.btBoxShape(createVector3(size * aspect, height, 1))
 	const topMotionState = new Ammo.btDefaultMotionState(wallTopTransform)
 	const topInfo = new Ammo.btRigidBodyConstructionInfo(0, topMotionState, wallTopShape, localInertia)
 	const topBody = new Ammo.btRigidBody(topInfo)
@@ -386,8 +409,8 @@ const addBoxToWorld = (size, height) => {
 
 	const wallBottomTransform = new Ammo.btTransform()
 	wallBottomTransform.setIdentity()
-	wallBottomTransform.setOrigin(setVector3(0, 0, (size/2) + .5))
-	const wallBottomShape = new Ammo.btBoxShape(setVector3(size * aspect, height, 1))
+	wallBottomTransform.setOrigin(createVector3(0, 0, (size/2) + .5))
+	const wallBottomShape = new Ammo.btBoxShape(createVector3(size * aspect, height, 1))
 	const bottomMotionState = new Ammo.btDefaultMotionState(wallBottomTransform)
 	const bottomInfo = new Ammo.btRigidBodyConstructionInfo(0, bottomMotionState, wallBottomShape, localInertia)
 	const bottomBody = new Ammo.btRigidBody(bottomInfo)
@@ -399,8 +422,8 @@ const addBoxToWorld = (size, height) => {
 
 	const wallRightTransform = new Ammo.btTransform()
 	wallRightTransform.setIdentity()
-	wallRightTransform.setOrigin(setVector3((size * aspect / -2) - .5, 0, 0))
-	const wallRightShape = new Ammo.btBoxShape(setVector3(1, height, size))
+	wallRightTransform.setOrigin(createVector3((size * aspect / -2) - .5, 0, 0))
+	const wallRightShape = new Ammo.btBoxShape(createVector3(1, height, size))
 	const rightMotionState = new Ammo.btDefaultMotionState(wallRightTransform)
 	const rightInfo = new Ammo.btRigidBodyConstructionInfo(0, rightMotionState, wallRightShape, localInertia)
 	const rightBody = new Ammo.btRigidBody(rightInfo)
@@ -412,8 +435,8 @@ const addBoxToWorld = (size, height) => {
 
 	const wallLeftTransform = new Ammo.btTransform()
 	wallLeftTransform.setIdentity()
-	wallLeftTransform.setOrigin(setVector3((size * aspect / 2) + .5, 0, 0))
-	const wallLeftShape = new Ammo.btBoxShape(setVector3(1, height, size))
+	wallLeftTransform.setOrigin(createVector3((size * aspect / 2) + .5, 0, 0))
+	const wallLeftShape = new Ammo.btBoxShape(createVector3(1, height, size))
 	const leftMotionState = new Ammo.btDefaultMotionState(wallLeftTransform)
 	const leftInfo = new Ammo.btRigidBodyConstructionInfo(0, leftMotionState, wallLeftShape, localInertia)
 	const leftBody = new Ammo.btRigidBody(leftInfo)
@@ -432,6 +455,23 @@ const addBoxToWorld = (size, height) => {
 const removeBoxFromWorld = () => {
 	boxParts.forEach(part => physicsWorld.removeRigidBody(part))
 }
+
+const queueDie = (options) => {
+	//console.log("queueDice")
+    diceQueue.push(options);
+
+    // Check if the queue is full
+    if (diceQueue.length >= queueLength) {
+		//console.log("isInitialized!")
+        // Sort the queue by die id
+        diceQueue.sort((a, b) => a.id - b.id);
+        // Set isInitialized to true to indicate the queue is ready to be processed
+		isInitialized = true;
+		physicsWorld.resetLocalTime();
+		stopLoop = false
+		loop()
+    }
+};
 
 const addDie = (options) => {
 	const { sides, id, meshName, scale} = options
@@ -462,14 +502,14 @@ const addDie = (options) => {
 const rollDie = (die) => {
 
 	// lerp picks a random number between two values
-	die.setLinearVelocity(setVector3(
-		lerp(-config.startPosition[0] * .5, -config.startPosition[0] * config.throwForce, Math.random()),
-		lerp(-config.startPosition[1], -config.startPosition[1] * 2, Math.random()), // limit the y force to 2
-		lerp(-config.startPosition[2] * .5, -config.startPosition[2] * config.throwForce, Math.random()),
+	die.setLinearVelocity(createVector3(
+		lerp(-config.startPosition[0] * .5, -config.startPosition[0] * config.throwForce, seededRandom()),
+		lerp(-config.startPosition[1], -config.startPosition[1] * 2, seededRandom()), // limit the y force to 2
+		lerp(-config.startPosition[2] * .5, -config.startPosition[2] * config.throwForce, seededRandom()),
 	))
 
-	const flippy = Math.random() > .5 ? 1 : -1 // random positive or negative number
-	const spinny = lerp(config.spinForce * .5, config.spinForce, Math.random())
+	const flippy = seededRandom() > .5 ? 1 : -1 // random positive or negative number
+	const spinny = lerp(config.spinForce * .5, config.spinForce, seededRandom())
 	const force = new Ammo.btVector3(
 		spinny * flippy,
 		spinny * -flippy, // flip the flippy to avoid gimble lock
@@ -482,7 +522,7 @@ const rollDie = (die) => {
 
 	// console.log('scale', scale)
 	
-	die.applyImpulse(force, setVector3(scale, scale, scale))
+	die.applyImpulse(force, createVector3(scale, scale, scale))
 
 }
 
@@ -501,6 +541,10 @@ const removeDie = (id) => {
 }
 
 const clearDice = () => {
+	//console.log("clearDice--------------------------")
+	physicsWorld.clearCollisionCache();
+	isInitialized = false;
+	diceQueue = []
 	if(diceBufferView.byteLength){
 		diceBufferView.fill(0)
 	}
@@ -511,13 +555,25 @@ const clearDice = () => {
 	// clear cache arrays
 	bodies = []
 	sleepingBodies = []
+
+	removeBoxFromWorld();
+	boxParts = [];
+	addBoxToWorld(config.size, config.startingHeight + 10)
+	physicsWorld.resetLocalTime();
+	physicsWorld.clearCollisionCache();
 }
 
 
 const setupPhysicsWorld = () => {
 	const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration()
-	const broadphase = new Ammo.btDbvtBroadphase()
+	let worldSize = 1000;
+	const broadphase = new Ammo.btAxisSweep3(
+		createVector3(-worldSize, -worldSize, -worldSize), // Minimum world bounds
+		createVector3(worldSize, worldSize, worldSize)     // Maximum world bounds
+	);
+
 	const solver = new Ammo.btSequentialImpulseConstraintSolver()
+
 	const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration)
 	const World = new Ammo.btDiscreteDynamicsWorld(
 		dispatcher,
@@ -525,17 +581,39 @@ const setupPhysicsWorld = () => {
 		solver,
 		collisionConfiguration
 	)
-	World.setGravity(setVector3(0, -9.81 * config.gravity, 0))
+
+	const solverInfo = World.getSolverInfo();
+    // Clear SOLVER_RANDMIZE_ORDER and SOLVER_USE_WARMSTARTING flags
+    solverInfo.m_solverMode &= ~Ammo.SOLVER_RANDMIZE_ORDER;
+    solverInfo.m_solverMode &= ~Ammo.SOLVER_USE_WARMSTARTING;
+
+	World.setGravity(createVector3(0, -9.81 * config.gravity, 0))
 
 	return World
 }
 
 const update = (delta) => {
+
+	// console.log("Current Positions of All Bodies:");
+    // bodies.forEach((rb, index) => {
+    //     const ms = rb.getMotionState();
+    //     if (ms) {
+    //         ms.getWorldTransform(tmpBtTrans);
+    //         const p = tmpBtTrans.getOrigin();
+    //         console.log(`Body ${index} (ID: ${rb.id}) Position: x=${p.x()}, y=${p.y()}, z=${p.z()}`);
+    //     } else {
+    //         console.log(`Body ${index} (ID: ${rb.id}) has no motion state.`);
+    //     }
+    // });
+	
 	// step world
 	const deltaTime = delta / 1000
 	
 	// console.time("stepSimulation")
-	physicsWorld.stepSimulation(deltaTime, 2, 1 / 90) // higher number = slow motion
+	//physicsWorld.clearCollisionCache();
+	physicsWorld.stepSimulation(deltaTime, 2, deltaTime) // higher number = slow motion
+	//physicsWorld.clearCollisionCache();
+
 	// console.timeEnd("stepSimulation")
 
 	diceBufferView[0] = bodies.length
@@ -595,8 +673,9 @@ const update = (delta) => {
 		const rb = bodies[i]
 		const speed = rb.getLinearVelocity().length()
 		const tilt = rb.getAngularVelocity().length()
-
+		//console.log("speed", speed, "tilt", tilt, "rb.timeout", rb.timeout)
 		if(speed < .01 && tilt < .005 || rb.timeout < 0) {
+			//console.log("zeroing out", rb.id)
 			// flag the second param for this body so it can be processed in World, first param will be the roll.id
 			diceBufferView[(i*8) + 1] = rb.id
 			diceBufferView[(i*8) + 2] = -1
@@ -630,19 +709,25 @@ const update = (delta) => {
 	}
 }
 
-let last = new Date().getTime()
 const loop = () => {
-	let now = new Date().getTime()
-	const delta = now - last
-	last = now
+    const delta = simSpeed;
 
-	if(!stopLoop && diceBufferView.byteLength) {
-		// console.time("physics")
-		update(delta)
-		// console.timeEnd("physics")
-			worldWorkerPort.postMessage({
-				action: 'updates',
-				diceBuffer: diceBufferView.buffer
-			}, [diceBufferView.buffer])
-	}
-}
+    if (!stopLoop && diceBufferView.byteLength) {
+        // If the queue is initialized and has dice, add them to the world
+        if (isInitialized && diceQueue.length > 0) {
+            // Dequeue the next die
+			const nextOptions = diceQueue.shift();
+			if (nextOptions) {
+				const nextDie = addDie(nextOptions);
+				rollDie(nextDie);
+			}
+        }
+
+        update(delta);
+
+        worldWorkerPort.postMessage({
+            action: 'updates',
+            diceBuffer: diceBufferView.buffer
+        }, [diceBufferView.buffer]);
+    }
+};

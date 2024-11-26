@@ -1,3 +1,12 @@
+# This is a fork of 3d-dice/dice-box with the goal of making the physics deterministic.
+
+This has been tested to work with usage of diceBox.roll and diceBox.clear on Chrome and Firefox.
+Use it the following way:
+const seed = {a: 11321, b: 22342, c: 33452, d: 42344};
+const simSpeed = 16;
+const results = await diceBox.roll(diceArray, yourOptions, seed, simSpeed);
+
+
 # Dice-Box &middot; [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/frankieali/infima-extras/blob/main/LICENSE) [![npm version](https://img.shields.io/npm/v/@3d-dice/dice-box.svg?style=flat)](https://www.npmjs.com/package/@3d-dice/dice-box)
 
 High performance 3D dice roller module made with [BabylonJS](https://www.babylonjs.com/), [AmmoJS](https://github.com/kripken/ammo.js/) and implemented with [web workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers) and [offscreenCanvas](https://doc.babylonjs.com/divingDeeper/scene/offscreenCanvas). Designed to be easy to integrate into your own JavaScript app.
