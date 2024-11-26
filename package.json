@@ -1,7 +1,7 @@
 {
-  "name": "@3d-dice/dice-box",
+  "name": "@3d-dice/dice-box-deterministic",
   "author": {
-    "name": "Frank Ali"
+    "name": "Frank Ali & Robert Wegner"
   },
   "description": "A 3D environment for rolling game dice",
   "version": "1.1.4",
@@ -17,13 +17,9 @@
     "tabletop"
   ],
   "license": "MIT",
-  "homepage": "https://fantasticdice.games/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/3d-dice/dice-box"
-  },
-  "bugs": {
-    "url": "https://github.com/3d-dice/dice-box/issues"
+    "url": "https://github.com/Robert-Wegner/dice-box-deterministic"
   },
   "type": "module",
   "files": [
