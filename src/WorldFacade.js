@@ -567,18 +567,23 @@ class WorldFacade {
 			const hasGroupId = notation.groupId !== undefined
 			let index
 			
+			// load the theme, will be short circuited if previously loaded
+			const loadTheme = () => this.loadTheme(theme)
+			await this.loadThemeQueue.push(loadTheme)
+
 			// const {meshName, diceAvailable, diceInherited = {}, material: { type: materialType }} = this.themesLoadedData[theme]
 			let diceAvailable = this.themesLoadedData[theme]?.diceAvailable
 			let diceExtended = this.themesLoadedData[theme].diceExtended || {}
 
-			const diceExtra = Object.keys(diceExtended)
+			if (diceExtended) {
+				const diceExtra = Object.keys(diceExtended)
 
-			if(diceExtra && diceExtra.includes(notation.sides)){
-				theme = diceExtended[notation.sides]
-				diceAvailable = this.themesLoadedData[theme]?.diceAvailable
+				if(diceExtra && diceExtra.includes(notation.sides)){
+					theme = diceExtended[notation.sides]
+					diceAvailable = this.themesLoadedData[theme]?.diceAvailable
+				}
 			}
-
-
+			
 			// TODO: should I validate that added dice are only joining groups of the same "sides" value - e.g.: d6's can only be added to groups when sides: 6? Probably.
 
 			for (var i = 0, len = notation.qty; i < len; i++) {
