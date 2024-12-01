@@ -40,16 +40,17 @@ class WorldOnscreen {
 	
 	// initialize the babylon scene
 	async initScene(config) {
-		this.#canvas  = config.canvas
-		this.#canvas.width = config.width
-		this.#canvas.height = config.height
+
+		this.#canvas = config.canvas
+		this.#canvas.width = config.options.canvasWidth ? config.options.canvasWidth : config.canvas.clientWidth
+		this.#canvas.height = config.options.canvasHeight ? config.options.canvasHeight : config.canvas.clientHeight
 	
 		// set the config from World
 		this.config = config.options
 	
 		// setup babylonJS scene
-		this.#engine  = createEngine(this.#canvas )
-		this.#scene = createScene({engine:this.#engine })
+		this.#engine  = createEngine(this.#canvas)
+		this.#scene = createScene({engine:this.#engine})
 		this.#camera  = createCamera({engine:this.#engine, scene: this.#scene})
 		this.#lights  = createLights({
 			enableShadows: this.config.enableShadows,
@@ -94,6 +95,7 @@ class WorldOnscreen {
 	}
 
 	updateConfig(options){
+
 		const prevConfig = this.config
 		this.config = options
 		// check if shadows setting has changed
@@ -248,7 +250,6 @@ class WorldOnscreen {
 
 	// add a die to the scene
 	async #add(options) {
-		
 		seed = options.seed
 		simSpeed = options.simSpeed
 
@@ -349,6 +350,7 @@ class WorldOnscreen {
 }
 	
 	updatesFromPhysics(buffer) {
+
 		this.diceBufferView = new Float32Array(buffer)
 		let bufferIndex = 1
 
@@ -433,11 +435,12 @@ class WorldOnscreen {
 	}
 	
 	resize(options) {
-		// redraw the dicebox
-		const width = this.#canvas.width = options.width
-		const height = this.#canvas.height = options.height
-		this.#container.create({aspect: width / height})
+		this.clear();
+		this.#canvas.width = options.width;
+		this.#canvas.height = options.height;
+		this.#container.create({aspect: options.width / options.height});
 		this.#engine.resize()
+		this.clear()
 	}
 }
 

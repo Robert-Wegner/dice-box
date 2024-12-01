@@ -34,8 +34,8 @@ class WorldOffScreen {
 		this.#OffscreenWorker.postMessage({
 			action: "init",
 			canvas: this.#offscreenCanvas,
-			width: config.canvas.clientWidth,
-			height: config.canvas.clientHeight,
+			width: config.options.canvasWidth ? config.options.canvasWidth : config.canvas.clientWidth,
+			height: config.options.canvasHeight ? config.options.canvasHeight : config.canvas.clientHeight,
 			options: config.options,
 		}, [this.#offscreenCanvas])
 

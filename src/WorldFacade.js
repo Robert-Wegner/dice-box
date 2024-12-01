@@ -41,8 +41,12 @@ class WorldFacade {
 	#dicePhysicsResolve
 	#webgl_support = true
 	noop = () => {}
+	canvasWidth
+	canvasHeight
+	autoResize = true
 
   constructor(options = {}){
+
 		// allow for depricated config with a warning
 		if (arguments.length === 2 && typeof(arguments[0] === 'string') && typeof(arguments[1] === 'object')) {
 			console.warn(`You are using the old API. Dicebox constructor accepts a config object as it's only argument. Please read the v1.1.0 docs at https://fantasticdice.games/docs/usage/config`)
@@ -67,8 +71,9 @@ class WorldFacade {
 		this.onThemeLoaded = options.onThemeLoaded || this.noop
 		this.onThemeConfigLoaded = options.onThemeConfigLoaded || this.noop
 		this.onCollision = options.onCollision || this.noop; // Add the new collision callback
-
-
+		this.canvasWidth = options.canvasWidth;
+		this.canvasHeight = options.canvasHeight;
+		this.autoResize = options.autoResize;
 		// is webGL supported?
 		if(webgl_support()){
 			// if a canvas selector is provided then that will be used for the dicebox, otherwise a canvas will be created using the config.id
@@ -154,8 +159,8 @@ class WorldFacade {
 		// initialize the AmmoJS physics worker
 		this.#DicePhysics.postMessage({
 			action: "init",
-			width: this.canvas.clientWidth,
-			height: this.canvas.clientHeight,
+			width: this.canvasWidth ? this.canvasWidth : this.canvas.clientWidth,
+			height: this.canvasHeight ? this.canvasHeight : this.canvas.clientHeight,
 			options: this.config
 		})
 	}
@@ -173,15 +178,32 @@ class WorldFacade {
 	}
 
 	resizeWorld(){
-		// send resize events to workers - debounced for performance
-		const resizeWorkers = () => {
-			this.#DiceWorld.resize({width: this.canvas.clientWidth, height: this.canvas.clientHeight})
-			if(this.#DicePhysics){
-				this.#DicePhysics.postMessage({action: "resize", width: this.canvas.clientWidth, height: this.canvas.clientHeight});
+		if (this.autoResize) {
+
+			const width = this.canvasWidth ? this.canvasWidth : this.canvas.clientWidth;
+			const height = this.canvasHeight ? this.canvasHeight : this.canvas.clientHeight
+
+			
+			// send resize events to workers - debounced for performance
+			const resizeWorkers = () => {
+				this.#DiceWorld.resize({width: width, height: height})
+				if(this.#DicePhysics){
+					this.#DicePhysics.postMessage({action: "resize", width: width, height: height});
+				}
 			}
+			const debounceResize = debounce(resizeWorkers)
+			window.addEventListener("resize", debounceResize)
 		}
-		const debounceResize = debounce(resizeWorkers)
-		window.addEventListener("resize", debounceResize)
+	}
+
+	manualResizeWorld() {
+		const width = this.canvasWidth ? this.canvasWidth : this.canvas.clientWidth;
+		const height = this.canvasHeight ? this.canvasHeight : this.canvas.clientHeight
+
+		this.#DiceWorld.resize({width: width, height: height})
+		if(this.#DicePhysics){
+			this.#DicePhysics.postMessage({action: "resize", width: width, height: height});
+		}
 	}
 
   async init() {
@@ -380,6 +402,7 @@ class WorldFacade {
 	// TODO: use getter and setter
 	// change config options
 	async updateConfig(options) {
+
 		const newConfig = {...this.config,...options}
 		// console.log('newConfig', newConfig)
 		// const config = await this.loadThemeQueue.push(() => this.loadTheme(newConfig.theme))
@@ -411,7 +434,27 @@ class WorldFacade {
 		return this
 	}
 
+	async setDimensions(width, height) {
+
+		if (!this.canvasWidth || this.canvasWidth != width || !this.canvasHeight || this.canvasHeight != height) {
+			this.canvasWidth = width;
+			this.canvasHeight = height;
+			const newConfig = {...this.config, ...{ canvasWidth: width, canvasHeight: height }};
+			this.config = newConfig;
+			await this.#DiceWorld.updateConfig(newConfig);
+			// if(this.#DicePhysics){
+			// 	await this.#DicePhysics.postMessage({
+			// 		action: 'updateConfig',
+			// 		options: newConfig
+			// 	});
+			// }
+		}
+		this.manualResizeWorld();
+		return this
+	}
+
 	clear() {
+
 		// reset indexes
 		this.#collectionIndex = 0
 		this.#groupIndex = 0
@@ -430,7 +473,7 @@ class WorldFacade {
 
 		// make this method chainable
 		return this
-  }
+  	}
 
 	hide(className) {
 		if(className){
@@ -463,6 +506,7 @@ class WorldFacade {
 
 	// TODO: pass data with roll - such as roll name. Passed back at the end in the results
 	roll(notation, {theme = this.config.theme, themeColor = this.config.themeColor, newStartPoint = true} = {}, seed = defaultSeed, simSpeed = defaultSimSpeed) {
+
 		// note: to add to a roll on screen use .add method
 		// reset the offscreen worker and physics worker with each new roll
 		this.clear()
@@ -552,6 +596,7 @@ class WorldFacade {
 	// used by both .add and .roll - .roll clears the box and .add does not
 
 	async #makeRoll(parsedNotation, collectionId, seed, simSpeed){
+
 		this.onBeforeRoll(parsedNotation)
 
 		const collection = this.rollCollectionData[collectionId]

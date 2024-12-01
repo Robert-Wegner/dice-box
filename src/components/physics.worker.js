@@ -29,7 +29,7 @@ let physicsWorld
 let Ammo
 let worldWorkerPort
 let tmpBtTrans
-const createVector3 = (x, y, z) => new Ammo.btVector3(x, y, z);
+let createVector3
 let width = 150
 let height = 150
 let aspect = 1
@@ -82,7 +82,8 @@ self.onmessage = (e) => {
 			width = e.data.width
 			height = e.data.height
 			aspect = width / height
-			addBoxToWorld(config.size, config.startingHeight + 10)
+			//addBoxToWorld(config.size, config.startingHeight + 10)
+			clearDice();
 			break
 		case "updateConfig":
 			updateConfig(e.data.options)
@@ -96,7 +97,6 @@ self.onmessage = (e) => {
 				diceBufferView[0] = -1
 				break;
 			case "loadModels":
-				// console.log('e.data', e.data)
 				loadModels(e.data.options)
 				break;
           	case "addDie":
@@ -115,11 +115,11 @@ self.onmessage = (e) => {
 						removeDie(e.data.id)
 						break;
           case "stopSimulation":
+
             stopLoop = true
 						
             break;
           case "resumeSimulation":
-				//console.log("resumeSimulation")
 				seededRandom = sfc32(e.data.seed)
 				simSpeed = e.data.simSpeed
 				if(e.data.newStartPoint){
@@ -182,7 +182,6 @@ const init = async (data) => {
 	config.throwForce = computeThrowForce(config.throwForce,config.mass,config.scale)
 	config.startingHeight = computeStartingHeight(config.startingHeight)
 
-	//console.log(config);
 	const ammoConfig = {
 		locateFile: (file) => `${config.origin + config.assetPath}ammo/${file}`
 	};
@@ -190,15 +189,15 @@ const init = async (data) => {
 	// Initialize Ammo.js
 	Ammo = await AmmoModule(ammoConfig);
 
-	//console.log(Ammo);
 	
+	createVector3 = (x, y, z) => new Ammo.btVector3(x, y, z);
 	tmpBtTrans = new Ammo.btTransform()
 	emptyVector = createVector3(0,0,0)
 
 	setStartPosition()
 	
 	physicsWorld = setupPhysicsWorld()
-	addBoxToWorld(config.size, config.startingHeight + 10)
+	clearDice();
 }
 
 const updateConfig = (options) => {
@@ -209,7 +208,6 @@ const updateConfig = (options) => {
 	if(options.mass || options.gravity) {
 		config.gravity = computeGravity(config.gravity, config.mass)
 	}
-	
 	if(options.spinForce) {
 		config.spinForce = computeSpin(config.spinForce)
 	}
@@ -220,12 +218,12 @@ const updateConfig = (options) => {
 		computeStartingHeight(config.startingHeight)
 	}
 
-	removeBoxFromWorld()
-	addBoxToWorld(config.size, config.startingHeight + 10)
+	clearDice();
 	physicsWorld.setGravity(createVector3(0, -9.81 * config.gravity, 0))
 	Object.values(colliders).map((collider) => {
 		collider.convexHull.setLocalScaling(createVector3(collider.scaling[0] * config.scale, collider.scaling[1] * config.scale, collider.scaling[2] * config.scale))
 	})
+	clearDice();
 }
 
 // options object with colliders and meshName are required
@@ -545,9 +543,13 @@ const clearDice = () => {
 	physicsWorld.clearCollisionCache();
 	isInitialized = false;
 	diceQueue = []
-	if(diceBufferView.byteLength){
-		diceBufferView.fill(0)
+
+	if (diceBufferView) {
+		if(diceBufferView.byteLength){
+			diceBufferView.fill(0)
+		}
 	}
+	
 	stopLoop = true
 	// clear all bodies
 	bodies.forEach(body => physicsWorld.removeRigidBody(body))
