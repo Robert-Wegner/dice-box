@@ -102,9 +102,6 @@ self.onmessage = (e) => {
           	case "addDie":
 				queueLength = e.data.options.queueLength
 				queueDie(e.data.options)
-				if(e.data.options.newStartPoint){
-					setStartPosition()
-				}
             break;
 
           case "rollDie":
@@ -120,11 +117,11 @@ self.onmessage = (e) => {
 						
             break;
           case "resumeSimulation":
-				seededRandom = sfc32(e.data.seed)
+				seededRandom = sfc32(e.data.seed);
 				simSpeed = e.data.simSpeed
-				if(e.data.newStartPoint){
-					setStartPosition()
-				}
+				// if(e.data.newStartPoint){
+				// 	setStartPosition()
+				// }
             break;
 					case "stepSimulation":
 						diceBufferView = new Float32Array(e.data.diceBuffer)
@@ -194,7 +191,7 @@ const init = async (data) => {
 	tmpBtTrans = new Ammo.btTransform()
 	emptyVector = createVector3(0,0,0)
 
-	setStartPosition()
+	//setStartPosition()
 	
 	physicsWorld = setupPhysicsWorld()
 	clearDice();
@@ -455,12 +452,10 @@ const removeBoxFromWorld = () => {
 }
 
 const queueDie = (options) => {
-	//console.log("queueDice")
     diceQueue.push(options);
 
     // Check if the queue is full
     if (diceQueue.length >= queueLength) {
-		//console.log("isInitialized!")
         // Sort the queue by die id
         diceQueue.sort((a, b) => a.id - b.id);
         // Set isInitialized to true to indicate the queue is ready to be processed
@@ -472,6 +467,9 @@ const queueDie = (options) => {
 };
 
 const addDie = (options) => {
+	if(true){ //e.data.options.newStartPoint
+		setStartPosition();
+	}
 	const { sides, id, meshName, scale} = options
 	const dieType = Number.isInteger(sides) ? `d${sides}` : sides
 	let cType = `${dieType}_collider`
@@ -498,7 +496,6 @@ const addDie = (options) => {
 }
 
 const rollDie = (die) => {
-
 	// lerp picks a random number between two values
 	die.setLinearVelocity(createVector3(
 		lerp(-config.startPosition[0] * .5, -config.startPosition[0] * config.throwForce, seededRandom()),
